@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <vector>
 #include <algorithm>
+#include "demo_config.h"
 
 int WARMUP_COUNT = 5;
 int REPEAT_COUNT = 10;
@@ -202,23 +203,13 @@ int main(int argc, char **argv) {
         "./image_classification_demo model_path label_path raw_rgb_image_path");
     return -1;
   }
-  std::string model_path = argv[1];
+  std::string model_dir = argv[1];
   std::string label_path = argv[2];
   std::string raw_rgb_image_path = argv[3];
 
   // Load Labels
   std::vector<std::string> word_labels = load_labels(label_path);
 
-  // Set MobileConfig
-  paddle::lite_api::MobileConfig config;
-  config.set_model_from_file(model_path);
-  config.set_threads(CPU_THREAD_NUM);
-  config.set_power_mode(CPU_POWER_MODE);
-
-  // Create PaddlePredictor by MobileConfig
-  std::shared_ptr<paddle::lite_api::PaddlePredictor> predictor =
-      paddle::lite_api::CreatePaddlePredictor<paddle::lite_api::MobileConfig>(
-          config);
 
   // Load raw image data from file
   std::ifstream raw_rgb_image_file(
@@ -235,6 +226,48 @@ int main(int argc, char **argv) {
   raw_rgb_image_file.read(reinterpret_cast<char *>(raw_rgb_image_data.data()),
                           raw_rgb_image_size * sizeof(float));
   raw_rgb_image_file.close();
+  
+  std::shared_ptr<paddle::lite_api::PaddlePredictor> predictor = nullptr;
+
+#ifdef USE_FULL_API
+  printf("Run Full api with CxxConfig\n");
+
+  // Run inference by using full api with CxxConfig
+  paddle::lite_api::CxxConfig cxx_config;
+  bool model_type = false;
+  if (model_type) { // combined model
+    cxx_config.set_model_file(model_dir + "/model");
+    cxx_config.set_param_file(model_dir + "/params");
+  } else {
+    cxx_config.set_model_dir(model_dir);
+  }
+  cxx_config.set_threads(CPU_THREAD_NUM);
+  cxx_config.set_power_mode(CPU_POWER_MODE);
+  cxx_config.set_valid_places(
+      {paddle::lite_api::Place{TARGET(kARM), PRECISION(kInt8)},
+       paddle::lite_api::Place{TARGET(kNNA), PRECISION(kInt8)}});
+  // cxx_config.set_subgraph_model_cache_dir(
+  //    model_dir.substr(0, model_dir.find_last_of("/")));
+  predictor = paddle::lite_api::CreatePaddlePredictor(cxx_config);
   process(raw_rgb_image_data.data(), word_labels, predictor);
+  predictor->SaveOptimizedModel(model_dir, paddle::lite_api::LiteModelType::kNaiveBuffer);
+
+#else
+  printf("Run light api with MobileConfig\n");
+
+  // Set MobileConfig
+  paddle::lite_api::MobileConfig mobile_config;
+  mobile_config.set_model_from_file(model_dir + ".nb");
+  mobile_config.set_threads(CPU_THREAD_NUM);
+  mobile_config.set_power_mode(CPU_POWER_MODE);
+
+  // Create PaddlePredictor by MobileConfig
+  predictor =
+    paddle::lite_api::CreatePaddlePredictor<paddle::lite_api::MobileConfig>
+    (mobile_config);
+
+  process(raw_rgb_image_data.data(), word_labels, predictor);
+#endif
+
   return 0;
 }
