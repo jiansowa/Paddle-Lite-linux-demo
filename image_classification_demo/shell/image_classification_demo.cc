@@ -245,6 +245,7 @@ int main(int argc, char **argv) {
   cxx_config.set_power_mode(CPU_POWER_MODE);
   cxx_config.set_valid_places(
       {paddle::lite_api::Place{TARGET(kARM), PRECISION(kInt8)},
+       paddle::lite_api::Place{TARGET(kARM), PRECISION(kFloat)},
        paddle::lite_api::Place{TARGET(kNNA), PRECISION(kInt8)}});
   // cxx_config.set_subgraph_model_cache_dir(
   //    model_dir.substr(0, model_dir.find_last_of("/")));
