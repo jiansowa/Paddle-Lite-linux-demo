@@ -10,6 +10,7 @@ IMGDNN_LIBS=/home/jasonwang/imgtools/imgdnn_arm64/2.6/lib
 MODEL_NAME=/home/jasonwang/models/paddle/MobileNetV1_quant_dl
 
 export LD_LIBRARY_PATH=${DEMO_ROOT}/../libs/PaddleLite/arm64/lib
+export GLOG_v=5
 
 sudo ./build/image_classification_demo ${MODEL_NAME} ${LABEL_NAME} ${IMAGE_NAME}
 
