@@ -19,14 +19,16 @@ message(STATUS "PADDLE LITE DIR: ${PADDLE_LITE_DIR}")
 
 option(USE_FULL_API "Use PaddleLite Full API" ON)
 
-configure_file(demo_config.h.in demo_config.h)
+#configure_file(demo_config.h.in demo_config.h)
 
 if(USE_FULL_API)
   message(STATUS "Use PaddleLite Full API")
 endif()
 
-include_directories(${PADDLE_LITE_DIR}/${TARGET_ARCH_ABI}/include ${PROJECT_BINARY_DIR})
-link_directories(${PADDLE_LITE_DIR}/${TARGET_ARCH_ABI}/lib)
+set(OPENCV_ROOT "/home/jasonwang/roc1_devb/depends/opencv_rel")
+
+include_directories(${PADDLE_LITE_DIR}/${TARGET_ARCH_ABI}/include ${PROJECT_BINARY_DIR} ${OPENCV_ROOT}/include)
+link_directories(${PADDLE_LITE_DIR}/${TARGET_ARCH_ABI}/lib ${OPENCV_ROOT}/lib)
 #;${IMGNNA_DDK_ROOT}/lib)
 #;${IMGDNN_DEPS}/lib)
 add_definitions(-std=c++11 -g -pthread)
@@ -55,5 +57,17 @@ else()
 endif()
 
 add_executable(image_classification_demo image_classification_demo.cc)
-#target_link_libraries(image_classification_demo paddle_light_api_shared imgdnn nnasession)
-target_link_libraries(image_classification_demo paddle_full_api_shared imgdnn nnasession)
+target_link_libraries(image_classification_demo paddle_light_api_shared imgdnn nnasession)
+#target_link_libraries(image_classification_demo paddle_full_api_shared imgdnn nnasession)
+if(USE_FULL_API)
+  message(STATUS "Use PaddleLite Full API")
+  target_compile_definitions(image_classification_demo PRIVATE USE_FULL_API)
+endif()
+
+add_executable(image_classification_demo_resize image_classification_demo_resize.cc)
+target_link_libraries(image_classification_demo_resize paddle_light_api_shared imgdnn nnasession opencv_core opencv_imgcodecs opencv_imgproc)
+if(USE_FULL_API)
+  message(STATUS "Use PaddleLite Full API")
+  target_compile_definitions(image_classification_demo_resize PRIVATE USE_FULL_API)
+endif()
+

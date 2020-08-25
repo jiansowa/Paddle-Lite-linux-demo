@@ -16,14 +16,16 @@
 #include <arm_neon.h>
 #include <fstream>
 #include <limits>
+#include <opencv2/opencv.hpp>
 #include <stdio.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <vector>
 #include <algorithm>
+#include "dirent.h"
 
-int WARMUP_COUNT = 5;
-int REPEAT_COUNT = 10;
+int WARMUP_COUNT = 0; // 5;
+int REPEAT_COUNT = 1;// 10;
 const int CPU_THREAD_NUM = 1;
 const paddle::lite_api::PowerMode CPU_POWER_MODE =
     paddle::lite_api::PowerMode::LITE_POWER_HIGH;
@@ -61,11 +63,20 @@ std::vector<std::string> load_labels(const std::string &path) {
   return labels;
 }
 
-void preprocess(const float *input_image, const std::vector<float> &input_mean,
+void preprocess(cv::Mat &input_image, const std::vector<float> &input_mean,
                 const std::vector<float> &input_std, int input_width,
                 int input_height, float *input_data) {
+  cv::Mat resize_image;
+  cv::resize(input_image, resize_image, cv::Size(input_width, input_height), 0,
+             0);
+  if (resize_image.channels() == 4) {
+    cv::cvtColor(resize_image, resize_image, cv::COLOR_BGRA2RGB);
+  }
+  cv::Mat norm_image;
+  resize_image.convertTo(norm_image, CV_32FC3, 1 / 255.f);
   // NHWC->NCHW
   int image_size = input_height * input_width;
+  const float *image_data = reinterpret_cast<const float *>(norm_image.data);
   float32x4_t vmean0 = vdupq_n_f32(input_mean[0]);
   float32x4_t vmean1 = vdupq_n_f32(input_mean[1]);
   float32x4_t vmean2 = vdupq_n_f32(input_mean[2]);
@@ -77,7 +88,7 @@ void preprocess(const float *input_image, const std::vector<float> &input_mean,
   float *input_data_c2 = input_data + image_size * 2;
   int i = 0;
   for (; i < image_size - 3; i += 4) {
-    float32x4x3_t vin3 = vld3q_f32(input_image);
+    float32x4x3_t vin3 = vld3q_f32(image_data);
     float32x4_t vsub0 = vsubq_f32(vin3.val[0], vmean0);
     float32x4_t vsub1 = vsubq_f32(vin3.val[1], vmean1);
     float32x4_t vsub2 = vsubq_f32(vin3.val[2], vmean2);
@@ -87,15 +98,15 @@ void preprocess(const float *input_image, const std::vector<float> &input_mean,
     vst1q_f32(input_data_c0, vs0);
     vst1q_f32(input_data_c1, vs1);
     vst1q_f32(input_data_c2, vs2);
-    input_image += 12;
+    image_data += 12;
     input_data_c0 += 4;
     input_data_c1 += 4;
     input_data_c2 += 4;
   }
   for (; i < image_size; i++) {
-    *(input_data_c0++) = (*(input_image++) - input_mean[0]) / input_std[0];
-    *(input_data_c1++) = (*(input_image++) - input_mean[1]) / input_std[1];
-    *(input_data_c2++) = (*(input_image++) - input_mean[2]) / input_std[2];
+    *(input_data_c0++) = (*(image_data++) - input_mean[0]) / input_std[0];
+    *(input_data_c1++) = (*(image_data++) - input_mean[1]) / input_std[1];
+    *(input_data_c2++) = (*(image_data++) - input_mean[2]) / input_std[2];
   }
 }
 
@@ -124,7 +135,7 @@ std::vector<RESULT> postprocess(const float *output_data, int64_t output_size,
   return results;
 }
 
-void process(const float *input_image, std::vector<std::string> &word_labels,
+void process(cv::Mat &input_image, std::vector<std::string> &word_labels,
              std::shared_ptr<paddle::lite_api::PaddlePredictor> &predictor) {
   // Preprocess image and fill the data of input tensor
   std::unique_ptr<paddle::lite_api::Tensor> input_tensor(
@@ -144,9 +155,10 @@ void process(const float *input_image, std::vector<std::string> &word_labels,
   // Run predictor
   // warm up to skip the first inference and get more stable time, remove it in
   // actual products
-  for (int i = 0; i < WARMUP_COUNT; i++) {
-    predictor->Run();
-  }
+  // for (int i = 0; i < WARMUP_COUNT; i++) {
+  //  predictor->Run();
+  // }
+
   // repeat to obtain the average time, set REPEAT_COUNT=1 in actual products
   double max_time_cost = 0.0f;
   double min_time_cost = std::numeric_limits<float>::max();
@@ -204,30 +216,12 @@ int main(int argc, char **argv) {
   }
   std::string model_dir = argv[1];
   std::string label_path = argv[2];
-  std::string raw_rgb_image_path = argv[3];
+  std::string input_image_path = argv[3];
 
   // Load Labels
   std::vector<std::string> word_labels = load_labels(label_path);
 
-
-  // Load raw image data from file
-  std::ifstream raw_rgb_image_file(
-      raw_rgb_image_path,
-      std::ios::in | std::ios::binary); // Raw RGB image with float data type
-  if (!raw_rgb_image_file) {
-    printf("Failed to load raw rgb image file %s\n",
-           raw_rgb_image_path.c_str());
-    return -1;
-  }
-  size_t raw_rgb_image_size =
-      INPUT_SHAPE[0] * INPUT_SHAPE[1] * INPUT_SHAPE[2] * INPUT_SHAPE[3];
-  std::vector<float> raw_rgb_image_data(raw_rgb_image_size);
-  raw_rgb_image_file.read(reinterpret_cast<char *>(raw_rgb_image_data.data()),
-                          raw_rgb_image_size * sizeof(float));
-  raw_rgb_image_file.close();
-  
   std::shared_ptr<paddle::lite_api::PaddlePredictor> predictor = nullptr;
-
 #ifdef USE_FULL_API
   printf("Run Full api with CxxConfig\n");
 
@@ -250,8 +244,8 @@ int main(int argc, char **argv) {
   // cxx_config.set_subgraph_model_cache_dir(
   //    model_dir.substr(0, model_dir.find_last_of("/")));
   predictor = paddle::lite_api::CreatePaddlePredictor(cxx_config);
-  process(raw_rgb_image_data.data(), word_labels, predictor);
-  predictor->SaveOptimizedModel(model_dir, paddle::lite_api::LiteModelType::kNaiveBuffer);
+  //process(raw_rgb_image_data.data(), word_labels, predictor);
+  //predictor->SaveOptimizedModel(model_dir, paddle::lite_api::LiteModelType::kNaiveBuffer);
   //predictor->SaveOptimizedModel("/home/unisoc/save_model/1", paddle::lite_api::LiteModelType::kProtobuf);
 #else
   printf("Run light api with MobileConfig\n");
@@ -267,8 +261,37 @@ int main(int argc, char **argv) {
     paddle::lite_api::CreatePaddlePredictor<paddle::lite_api::MobileConfig>
     (mobile_config);
 
-  process(raw_rgb_image_data.data(), word_labels, predictor);
+  //process(raw_rgb_image_data.data(), word_labels, predictor);
 #endif
+
+  DIR *dp;
+  struct dirent *dirp;
+  dp = opendir(input_image_path.c_str());
+  if ( !dp )  {
+    printf("open error ", strerror(errno));
+    return -1;
+  }
+
+  std::string fullname;
+  std::string filename;
+  std::string suffix;
+  cv::Mat input_image;
+  int count = 0;
+  std::cout << input_image_path << std::endl; 
+  while ((dirp = readdir(dp)) != nullptr && count < 10) {
+    filename = dirp->d_name;
+    suffix = filename.substr(filename.find_last_of('.') + 1);
+    // std::cout << suffix << std::endl; 
+    if (suffix != "jpg" && suffix != "JPEG")
+      continue;
+    fullname = input_image_path + "/";
+    fullname += filename;
+    std::cout << fullname << std::endl;
+    input_image = cv::imread(fullname, 1);
+    process(input_image, word_labels, predictor);
+    count++;
+  }
 
   return 0;
 }
+
